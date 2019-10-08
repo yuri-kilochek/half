@@ -12,29 +12,19 @@ class half {
     using uint_t = std::uint16_t;
     using uint_fast_t = std::uint_fast16_t;
 
+    static constexpr
+    std::size_t const exp_width = 5;
+
+    static constexpr
+    std::size_t const frac_width = 10;
+
+    static constexpr
+    uint_fast_t const max_exp = (uint_fast_t{1} << exp_width) - 1;
+
+    static constexpr
+    uint_fast_t const max_frac = (uint_fast_t{1} << frac_width) - 1;
+
     uint_t bits;
-
-    template <typename T>
-    struct float_layout {
-        static constexpr
-        unsigned const width = sizeof(T) * CHAR_BIT;
-
-        static constexpr
-        unsigned const mantissa_width = std::numeric_limits<T>::digits;
-
-        static constexpr
-        auto const exponent_width = width - mantissa_width - 1u;
-
-        static constexpr
-        auto const exponent_offset = mantissa_width;
-
-        static constexpr
-        auto const sign_offset = width - 1u;
-
-
-    };
-
-
 
 
     // TODO: C++2a: Replace with `std::bit_cast`.
@@ -52,18 +42,31 @@ public:
     template <typename T,
         std::enable_if_t<std::numeric_limits<T>::is_iec559>*...>
     half(T x) {
-        using layout_t = float_layout<T>;
+        constexpr
+        auto width = sizeof(T) * CHAR_BIT;
 
-        using uint_fast_t = uint_fastN_t<layout_t::width>;
-        using uint_t = uintN_t<layout_t::width>;
+        using uint_fast_t = uint_fastN_t<width>;
+        using uint_t = uintN_t<width>;
+
+        constexpr
+        auto frac_width = std::numeric_limits<T>::digits - 1;
+
+        constexpr
+        uint_fast_t tiny_exp_frac = uint_fast_t{1} << (frac_width - half::frac_width);
+
+        constexpr
+        uint_fast_t huge_exp_frac = uint_fast_t(half::max_exp - 1) << frac_width
+                                  | half::max_frac << (frac_width - half::frac_width);
+
+        constexpr
+        uint_fast_t exp_frac_mask = (uint_fast_t{1} << (width - 1)) - 1;
 
         unit_fast_t bits = bit_cast<uint_t>(x);
+        uint_fast_t exp_frac = bits & exp_frac_mask;
 
-        auto sign = half::fast_uint_t(bits >> (layout::sign_offset - half::layout::sign_offset)) & half::sign_mask;
-        auto exponent = bits >> mantissa_width & bits_t{0b11111111};
-        auto mantissa = bits & bits_t{0b11111111};
+        uint_fast_t underflow = -uint_fast_t(exp_frac < tiny_exp_frac);
+        uint_fast_t overflow = -uint_fast_t(exp_frac > huge_exp_frac);
 
-        half::bits = bits >> 16 & 
 
 
 
