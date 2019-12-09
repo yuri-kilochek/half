@@ -2,6 +2,7 @@
 #define HALFFLOAT_DETAIL_INCLUDED_HPP
 
 #include <cstdint>
+#include <cfenv>
 #include <cstddef>
 #include <limits>
 #include <climits>
@@ -31,7 +32,7 @@ struct half {
         std::numeric_limits<T>::is_iec559 && sizeof(T) * CHAR_BIT == 32
     >*...>
     half(T value) {
-        int ex;
+        int excepts = 0;
 
         std::uint_fast32_t f = detail::bit_cast<std::uint32_t>(value);
 
@@ -39,51 +40,88 @@ struct half {
         auto f_e = f & 0x7F800000u;
         auto f_m = f & 0x007FFFFFu;
 
-        std::uint_fast16_t h_s = f_s >> 16u;
-        std::uint_fast16_t h_e;
-        std::uint_fast16_t h_m;
+        std::uint_fast16_t h = f_s >> 16;
 
-        auto e = detail::as_signed(f_e >> 23u) - 127;
-        if (e < -15 - 10) {
-            // Zero or a subnormal that will underflow to zero regardless of
-            // mantissa.
+        bool done;
+        {
+            // zeros and definitely underflowing subnormals
+            bool do_now = f_e < 0x33000000u;
 
-            h_e = 0;
-            h_m = 0;
+            bool underflowed = f & 0x7FFFFFFFu;
+            excepts |= -(do_now & underflowed) & FE_UNDERFLOW;
 
-            ex = FP_UNDERFLOW;
-        } else if (e <= -15) {
-            // Subnormal that might or might not underflow depending on
-            // mantissa.
+            done = do_now;
+        }
+        {
+            // subnormals
+            bool do_now = !done & (f_e <= 0x38000000u);
 
-            h_e = 0;
+            int e = f_e >> 23;
+            auto wide_m = 0x00800000u | f_m;
+            auto m = wide_m >> ((113 - e) & -do_now);
+            m += -std::uint_fast32_t(((m & 0x00003FFFu) != 0x00001000u) | !!(wide_m & 0x000007FFu)) & 0x00001000u;
+            std::uint_fast16_t h_m = m >> 13;
+            h |= -std::uint_fast16_t(do_now) & h_m;
 
-            auto wide_m = 0x800000u | f_m;
+            bool underflowed = ((std::uint_fast32_t{1} << ((126 - e) & -do_now)) - 1u) & wide_m;
+            excepts |= -(do_now & underflowed) & FE_UNDERFLOW;
 
-            if (wide_m & ((1 << (-1 - e)) - 1)) {
-                ex = FP_UNDERFLOW;
-            }
+            done |= do_now;
+        }
+        {
+            // normals
+            bool do_now = !done & (f_e < 0x47800000u);
 
-            auto m = wide_m >> detail::as_unsigned(-14 - e);
+            std::uint_fast16_t h_e = (f_e - 0x38000000u) >> 13;
+            auto m = f_m;
+            m += -std::uint_fast32_t((m & 0x00003FFFu) != 0x00001000u) & 0x00001000u;
+            std::uint_fast16_t h_m = m >> 13;
+            auto h_em = h_e + h_m;
+            h |= -std::uint_fast16_t(do_now) & h_em;
 
-            // Round to even.
-            if (((m & 0x3FFFu) ^ 0x1000u) | (wide_m & 0x7FFu)) {
-                m += 0x1000u;
-            }
+            bool overflowed = h_em == 0x7C00u;
+            excepts |= -(do_now & overflowed) & FE_OVERFLOW;
 
-            h_m = m >> 13u;
+            done |= do_now;
+        }
+        {
+            // definitely overflowing normals
+            bool do_now = !done & (f_e < 0x7F800000u);
+
+            h |= -std::uint_fast16_t(do_now) & 0x7C00u;
+
+            excepts |= -do_now & FE_OVERFLOW;
+
+            done |= do_now;
+        }
+        {
+            // infinities
+            bool do_now = !done & !f_m;
+
+            h |= -std::uint_fast16_t(do_now) & 0x7C00u;
+
+            done |= do_now;
+        }
+        {
+            // nans
+            bool do_now = !done;
+
+            std::uint_fast16_t h_m = f_m >> 13;
+            h_m |= !h_m;
+            auto h_em = 0x7C00u | h_m;
+            h |= -std::uint_fast16_t(do_now) & h_em;
         }
 
-        half::bits = h_s | (h_e + h_m);
+        half::bits = h;
 
-        std::feraiseexcept(ex);
+        std::feraiseexcept(excepts);
     }
 
     half()
     = default;
 
 private:
-    std::int16_t bits;
+    std::uint16_t bits;
 };
 
 static_assert(sizeof(half) * CHAR_BIT == 16);
@@ -100,7 +138,7 @@ auto operator-(half x)
 {
     return detail::bit_cast<half>(
         static_cast<std::uint16_t>(
-            detail::bit_cast<std::uint16_t>(x) ^ 0b10000000'00000000u
+            detail::bit_cast<std::uint16_t>(x) ^ 0x80u
         )
     );
 }
@@ -111,7 +149,7 @@ auto fabs(half x)
 {
     return detail::bit_cast<half>(
         static_cast<std::uint16_t>(
-            detail::bit_cast<std::uint16_t>(x) & 0b01111111'11111111u
+            detail::bit_cast<std::uint16_t>(x) & 0x7Fu
         )
     );
 }
@@ -124,7 +162,7 @@ auto abs(half x)
 inline
 auto signbit(half x)
 -> bool
-{ return detail::bit_cast<std::uint16_t>(x) & 0b10000000'00000000u; }
+{ return detail::bit_cast<std::uint16_t>(x) & 0x80u; }
 
 inline
 auto copysign(half x, half y)
@@ -132,8 +170,8 @@ auto copysign(half x, half y)
 {
     return detail::bit_cast<half>(
         static_cast<std::uint16_t>(
-            detail::bit_cast<std::uint16_t>(y) & 0b10000000'00000000u |
-            detail::bit_cast<std::uint16_t>(x) & 0b01111111'11111111u
+            detail::bit_cast<std::uint16_t>(y) & 0x80u |
+            detail::bit_cast<std::uint16_t>(x) & 0x7Fu
         )
     );
 }
