@@ -1,5 +1,5 @@
-#ifndef HALFFLOAT_DETAIL_INCLUDED_HPP
-#define HALFFLOAT_DETAIL_INCLUDED_HPP
+#ifndef HALF_DETAIL_INCLUDED
+#define HALF_DETAIL_INCLUDED
 
 #include <cstdint>
 #include <cfenv>
@@ -9,10 +9,7 @@
 #include <cstring>
 #include <type_traits>
 
-namespace halffloat {
-///////////////////////////////////////////////////////////////////////////////
-
-namespace detail {
+namespace half_detail {
     template <typename To, typename From>
     auto bit_cast(From from)
     -> To
@@ -25,12 +22,62 @@ namespace detail {
         std::memcpy(&to, &from, sizeof(to));
         return to;
     }
+
+
+    template <std::size_t Radix, std::size_t Width, typename T>
+    struct is_iec559
+    : std::bool_constant<std::numeric_limits<T>::is_iec559 &&
+                         std::numeric_limits<T>::radix == Radix &&
+                         sizeof(T) * CHAR_BIT == Width>
+    {};
+
+    template <std::size_t Radix, std::size_t Width, typename T>
+    constexpr
+    auto is_iec559_v = is_iec559<Radix, Width, T>::value;
+
+
+    template <typename T, typename = void>
+    struct iec559_traits;
+
+    template <typename T>
+    struct iec559_traits<T, is_iec559_v<2, 32, T>> {
+        using bits_type = std::uint32_t;
+        using bits_fast_type = std::uint_fast32_t;
+
+        constexpr
+        std::uint_fast8_t exponent_width = 8;
+    };
+
+    template <typename T>
+    struct iec559_traits<T, is_iec559_v<2, 64, T>> {
+        using bits_type = std::uint64_t;
+        using bits_fast_type = std::uint_fast64_t;
+
+        constexpr
+        std::uint_fast8_t exponent_width = 11;
+    };
+
+    template <typename T>
+    using bits_type = typename iec559_traits<T>::bits_type;
+
+    template <typename T>
+    using bits_fast_type = typename iec559_traits<T>::bits_fast_type;
+
+    template <typename T>
+    constexpr
+    auto width = sizeof(bits_type<T>) * CHAR_BIT;
+
+    template <typename T>
+    constexpr
+    auto exponent_width = iec559_traits<T>::exponent_width;
+
+    template <typename T>
+    constexpr
+    auto mantissa_width = width<T> - exponent_width<T> - 1;
 }
 
 struct half {
-    template <typename T, std::enable_if_t<
-        std::numeric_limits<T>::is_iec559 && sizeof(T) * CHAR_BIT == 32
-    >*...>
+    template <typename T, std::enable_if_t<detail::is_iec559_v<2, 32, T>>*...>
     half(T value) {
         int excepts = 0;
 
@@ -127,29 +174,32 @@ private:
 static_assert(sizeof(half) * CHAR_BIT == 16);
 static_assert(std::is_trivial_v<half>);
 
+
 inline
 auto operator+(half x)
 -> half
 { return x; }
 
+
 inline
 auto operator-(half x)
 -> half
 {
-    return detail::bit_cast<half>(
+    return half_detail::bit_cast<half>(
         static_cast<std::uint16_t>(
-            detail::bit_cast<std::uint16_t>(x) ^ 0x80u
+            half_detail::bit_cast<std::uint16_t>(x) ^ 0x80u
         )
     );
 }
+
 
 inline
 auto fabs(half x)
 -> half
 {
-    return detail::bit_cast<half>(
+    return half_detail::bit_cast<half>(
         static_cast<std::uint16_t>(
-            detail::bit_cast<std::uint16_t>(x) & 0x7Fu
+            half_detail::bit_cast<std::uint16_t>(x) & 0x7Fu
         )
     );
 }
@@ -159,24 +209,23 @@ auto abs(half x)
 -> half
 { return fabs(x); }
 
+
 inline
 auto signbit(half x)
 -> bool
-{ return detail::bit_cast<std::uint16_t>(x) & 0x80u; }
+{ return half_detail::bit_cast<std::uint16_t>(x) & 0x80u; }
+
 
 inline
 auto copysign(half x, half y)
 -> half
 {
-    return detail::bit_cast<half>(
+    return half_detail::bit_cast<half>(
         static_cast<std::uint16_t>(
-            detail::bit_cast<std::uint16_t>(y) & 0x80u |
-            detail::bit_cast<std::uint16_t>(x) & 0x7Fu
+            half_detail::bit_cast<std::uint16_t>(y) & 0x80u |
+            half_detail::bit_cast<std::uint16_t>(x) & 0x7Fu
         )
     );
-}
-
-///////////////////////////////////////////////////////////////////////////////
 }
 
 #endif
