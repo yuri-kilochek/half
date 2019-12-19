@@ -24,59 +24,83 @@ namespace half_detail {
     }
 
 
-    template <std::size_t Radix, std::size_t Width, typename T>
-    struct is_iec559
-    : std::bool_constant<std::numeric_limits<T>::is_iec559 &&
-                         std::numeric_limits<T>::radix == Radix &&
-                         sizeof(T) * CHAR_BIT == Width>
-    {};
+    template <std::size_t Width>
+    struct uint;
 
-    template <std::size_t Radix, std::size_t Width, typename T>
-    constexpr
-    auto is_iec559_v = is_iec559<Radix, Width, T>::value;
-
-
-    template <typename T, typename = void>
-    struct iec559_traits;
-
-    template <typename T>
-    struct iec559_traits<T, is_iec559_v<2, 32, T>> {
-        using bits_type = std::uint32_t;
-        using bits_fast_type = std::uint_fast32_t;
-
-        constexpr
-        std::uint_fast8_t exponent_width = 8;
+    template <>
+    struct uint<16> {
+        using type = std::uint16_t;
     };
 
-    template <typename T>
-    struct iec559_traits<T, is_iec559_v<2, 64, T>> {
-        using bits_type = std::uint64_t;
-        using bits_fast_type = std::uint_fast64_t;
-
-        constexpr
-        std::uint_fast8_t exponent_width = 11;
+    template <>
+    struct uint<32> {
+        using type = std::uint32_t;
     };
 
-    template <typename T>
-    using bits_type = typename iec559_traits<T>::bits_type;
+    template <>
+    struct uint<64> {
+        using type = std::uint64_t;
+    };
 
-    template <typename T>
-    using bits_fast_type = typename iec559_traits<T>::bits_fast_type;
+    template <std::size_t Width>
+    using uint_t = typename uint<Width>::type;
+    
 
-    template <typename T>
+    template <std::size_t Width>
+    struct uint_fast;
+
+    template <>
+    struct uint_fast<16> {
+        using type = std::uint_fast16_t;
+    };
+
+    template <>
+    struct uint_fast<32> {
+        using type = std::uint_fast32_t;
+    };
+
+    template <>
+    struct uint_fast<64> {
+        using type = std::uint_fast64_t;
+    };
+
+    template <std::size_t Width>
+    using uint_fast_t = typename uint_fast<Width>::type;
+
+
+    template <std::size_t Width>
     constexpr
-    auto width = sizeof(bits_type<T>) * CHAR_BIT;
+    struct {} exponent_width;
 
-    template <typename T>
+    template <>
     constexpr
-    auto exponent_width = iec559_traits<T>::exponent_width;
+    std::int_fast8_t exponent_width<16> = 5;
 
-    template <typename T>
+    template <>
     constexpr
-    auto mantissa_width = width<T> - exponent_width<T> - 1;
+    std::int_fast8_t exponent_width<32> = 8;
+
+    template <>
+    constexpr
+    std::int_fast8_t exponent_width<64> = 11;
+
 }
 
 struct half {
+    template <typename T, std::enable_if_t<
+        std::numeric_limits<T>::is_iec559 &&
+        std::numeric_limits<T>::radix == 2
+    >*...>
+    half(T value) {
+        using traits = half_detail::iec559_traits<T>;
+
+        using bits_t = typename traits::bits_t;
+        using bits_fast_t = typename traits::bits_fast_t;
+
+        constexpr
+        auto width = traits::width;
+    }
+
     template <typename T, std::enable_if_t<detail::is_iec559_v<2, 32, T>>*...>
     half(T value) {
         int excepts = 0;
@@ -186,8 +210,8 @@ auto operator-(half x)
 -> half
 {
     return half_detail::bit_cast<half>(
-        static_cast<std::uint16_t>(
-            half_detail::bit_cast<std::uint16_t>(x) ^ 0x80u
+        static_cast<half::traits::bits_t>(
+            half_detail::bit_cast<half::traits::bits_t>(x) ^ 0x80u
         )
     );
 }
